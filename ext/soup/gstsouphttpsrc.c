@@ -885,6 +885,64 @@ gst_soup_http_src_add_extra_headers (GstSoupHTTPSrc * src)
   return gst_structure_foreach (src->extra_headers, _append_extra_headers, src);
 }
 
+static void
+gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
+{
+  GstContext *context;
+
+  if (src->cookie_jar)
+    return;
+
+  /* Check if we have a context */
+  context = gst_element_get_context (GST_ELEMENT_CAST (src), "soup-http");
+
+  /* Query downstream for a context */
+  if (!context) {
+    GstQuery *query = gst_query_new_context ("soup-http");
+    if (gst_pad_peer_query (GST_BASE_SRC_PAD (src), query)) {
+      gst_query_parse_context (query, &context);
+    }
+    gst_query_unref (query);
+  }
+
+  /* Post a message asking for a context */
+  if (!context) {
+    GstMessage *msg =
+        gst_message_new_need_context (GST_OBJECT_CAST (src), "soup-http");
+
+    if (gst_element_post_message (GST_ELEMENT_CAST (src), msg))
+      context = gst_element_get_context (GST_ELEMENT_CAST (src), "soup-http");
+  }
+
+  /* if we got a context, use it, otherwise provide one */
+  if (context) {
+    const GstStructure *structure = gst_context_get_structure (context);
+
+    gst_structure_get (structure, "soup-cookie-jar", G_TYPE_OBJECT,
+        &src->cookie_jar, NULL);
+
+    gst_context_unref (context);
+  }
+
+  if (!src->cookie_jar) {
+    GstMessage *msg;
+    GstStructure *structure;
+
+    src->cookie_jar = soup_cookie_jar_new ();
+
+    if (!context)
+      context = gst_context_new ("soup-http", FALSE);
+    else
+      context = gst_context_make_writable (context);
+
+    structure = gst_context_writable_structure (context);
+    gst_structure_set (structure, "soup-cookie-jar", G_TYPE_OBJECT,
+        src->cookie_jar, NULL);
+    msg = gst_message_new_have_context (GST_OBJECT_CAST (src), context);
+    gst_element_post_message (GST_ELEMENT_CAST (src), msg);
+  }
+}
+
 static gboolean
 gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
 {
@@ -944,9 +1002,11 @@ gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
     soup_session_remove_feature_by_type (src->session,
         SOUP_TYPE_CONTENT_DECODER);
 
-  src->cookie_jar = soup_cookie_jar_new ();
-  soup_session_add_feature (src->session,
-      SOUP_SESSION_FEATURE (src->cookie_jar));
+  gst_soup_http_src_ensure_cookie_jar (src);
+
+  if (src->cookie_jar)
+    soup_session_add_feature (src->session,
+        SOUP_SESSION_FEATURE (src->cookie_jar));
   return TRUE;
 }
 
