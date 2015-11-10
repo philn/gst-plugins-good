@@ -1923,10 +1923,7 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
   gint minsize, maxsize, align;
   GstContext *context;
   GstStructure *context_structure;
-  char *cookie;
-  const gchar *cookies[2];
   const gchar *context_type;
-  SoupURI *uri;
 
   switch (GST_QUERY_TYPE (query)) {
     case GST_QUERY_URI:
@@ -1940,21 +1937,12 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
       break;
     case GST_QUERY_CONTEXT:
       if (gst_query_parse_context_type (query, &context_type)
-          && !g_strcmp0 (context_type, "http-headers")) {
-        uri = soup_uri_new (src->location);
-        cookie = soup_cookie_jar_get_cookies (src->cookie_jar, uri, TRUE);
-        context = gst_context_new ("http-headers", FALSE);
-        context = gst_context_make_writable (context);
+          && !g_strcmp0 (context_type, "soup-http") && src->cookie_jar) {
+        context = gst_context_new ("soup-http", FALSE);
         context_structure = gst_context_writable_structure (context);
-        if (cookie != NULL) {
-          cookies[0] = cookie;
-          cookies[1] = NULL;
-          gst_structure_set (context_structure, "cookies", G_TYPE_STRV, cookies,
-              NULL);
-          g_free (cookie);
-        }
+        gst_structure_set (context_structure, "soup-cookie-jar", G_TYPE_OBJECT,
+            src->cookie_jar, NULL);
         gst_query_set_context (query, context);
-        soup_uri_free (uri);
         ret = TRUE;
         break;
       }
