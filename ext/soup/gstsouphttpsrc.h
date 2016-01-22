@@ -17,6 +17,7 @@
 
 #include <gst/gst.h>
 #include <gst/base/gstpushsrc.h>
+#include <gst/http/gsthttpcookiejar.h>
 #include <glib.h>
 
 G_BEGIN_DECLS
@@ -61,6 +62,9 @@ struct _GstSoupHTTPSrc {
   gchar **cookies;             /* HTTP request cookies. */
   SoupSession *session;        /* Async context. */
   SoupCookieJar *cookie_jar;   /* Volatile HTTP cookie storage */
+  GstHttpCookieJar *gstcookie_jar; /* gst shared cookie jar for having cookies
+                                    * shared across all http elements */
+
   SoupMessage *msg;            /* Request message. */
   GstFlowReturn ret;           /* Return code from callback. */
   gint retry_count;            /* Number of retries since we received data */

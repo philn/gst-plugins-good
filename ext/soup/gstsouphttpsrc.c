@@ -78,6 +78,7 @@
 #include <gst/gstelement.h>
 #include <gst/gst-i18n-plugin.h>
 #include <libsoup/soup.h>
+#include <glib/gprintf.h>
 #include "gstsouphttpsrc.h"
 #include "gstsouputils.h"
 
@@ -885,20 +886,171 @@ gst_soup_http_src_add_extra_headers (GstSoupHTTPSrc * src)
   return gst_structure_foreach (src->extra_headers, _append_extra_headers, src);
 }
 
+static GDateTime *
+gdatetime_from_soup_expires (SoupDate * date)
+{
+  GDateTime *dt;
+  GTimeZone *tz = NULL;
+
+  if (date == NULL)
+    return NULL;
+
+  if (date->utc) {
+    dt = g_date_time_new_utc (date->year, date->month, date->day,
+        date->hour, date->minute, date->second);
+  } else {
+    gchar tzstr[6];
+    g_sprintf (tzstr, "%c%02u%02u", date->offset > 0 ? '+' : '-',
+        date->offset / 60, date->offset % 60);
+
+    tz = g_time_zone_new (tzstr);
+    dt = g_date_time_new (tz, date->year, date->month, date->day,
+        date->hour, date->minute, date->second);
+  }
+  return dt;
+}
+
+static SoupDate *
+soup_expires_from_gdatetime (GDateTime * dt)
+{
+  SoupDate *sd;
+  GTimeSpan offset;
+
+  if (dt == NULL)
+    return NULL;
+
+  sd = soup_date_new (g_date_time_get_year (dt),
+      g_date_time_get_month (dt),
+      g_date_time_get_day_of_month (dt),
+      g_date_time_get_hour (dt), g_date_time_get_minute (dt),
+      g_date_time_get_second (dt));
+
+  offset = g_date_time_get_utc_offset (dt);
+  if (offset) {
+    sd->offset = offset / 1000000;
+  } else {
+    sd->utc = TRUE;
+  }
+
+  return sd;
+}
+
+#define COPY_COOKIE_DATA(f, t) \
+  (t)->name = f->name; \
+  (t)->value = f->value; \
+  (t)->path = f->path; \
+  (t)->domain = f->domain; \
+  (t)->secure = f->secure; \
+  (t)->http_only = f->http_only;
+
+#define SOUP_TO_GST_COOKIE(s, g) \
+  COPY_COOKIE_DATA (s, g);
+
+#define GST_TO_SOUP_COOKIE(g, s) \
+  COPY_COOKIE_DATA(g, s);
+
+static void
+_cookie_jar_changed (SoupCookieJar * cookie_jar, SoupCookie * oldcookie,
+    SoupCookie * newcookie, gpointer udata)
+{
+  GstSoupHTTPSrc *src = udata;
+
+  if (oldcookie != NULL) {
+    GstHttpCookie gst_oldcookie;
+    SOUP_TO_GST_COOKIE (oldcookie, &gst_oldcookie);
+    gst_http_cookie_jar_delete_cookie (src->gstcookie_jar, src, &gst_oldcookie);
+    if (gst_oldcookie.expires)
+      g_date_time_unref (gst_oldcookie.expires);
+  }
+
+  if (newcookie != NULL) {
+    GstHttpCookie *gst_newcookie;
+    GDateTime *dt;
+
+    gst_newcookie =
+        gst_http_cookie_new (newcookie->name, newcookie->value,
+        newcookie->domain, newcookie->path, -1);
+    if (newcookie->expires) {
+      dt = gdatetime_from_soup_expires (newcookie->expires);
+      gst_http_cookie_set_expires (gst_newcookie, dt);
+      g_date_time_unref (dt);
+    }
+    gst_http_cookie_jar_add_cookie (src->gstcookie_jar, src, gst_newcookie);
+  }
+}
+
+static void
+_gstcookie_jar_changed (GstHttpCookieJar * gstcookie_jar, gpointer author,
+    GstHttpCookie * oldcookie, GstHttpCookie * newcookie, gpointer udata)
+{
+  GstSoupHTTPSrc *src = udata;
+
+  /* This is our own change, no need to modify */
+  if (author == udata)
+    return;
+
+  if (oldcookie) {
+    SoupCookie soup_oldcookie;
+
+    GST_TO_SOUP_COOKIE (oldcookie, &soup_oldcookie);
+    soup_cookie_jar_delete_cookie (src->cookie_jar, &soup_oldcookie);
+    if (soup_oldcookie.expires)
+      soup_date_free (soup_oldcookie.expires);
+  }
+
+  if (newcookie) {
+    SoupCookie *soup_newcookie;
+    SoupDate *dt;
+
+    soup_newcookie =
+        soup_cookie_new (newcookie->name, newcookie->value, newcookie->domain,
+        newcookie->path, -1);
+    if (newcookie->expires) {
+      dt = soup_expires_from_gdatetime (newcookie->expires);
+      soup_cookie_set_expires (soup_newcookie, dt);
+      soup_date_free (dt);
+    }
+    soup_cookie_jar_add_cookie (src->cookie_jar, soup_newcookie);
+  }
+}
+
+static void
+gst_soup_http_src_copy_gst_cookies_to_soup_cookies (GstSoupHTTPSrc * src)
+{
+  GSList *cookies, *iter;
+
+  cookies = gst_http_cookie_jar_all_cookies (src->gstcookie_jar);
+
+  for (iter = cookies; iter; iter = g_slist_next (iter)) {
+    GstHttpCookie *c = iter->data;
+    SoupCookie *cookie;
+
+    cookie = soup_cookie_new (c->name, c->value, c->domain, c->path, -1);
+    soup_cookie_jar_add_cookie (src->cookie_jar, cookie);
+  }
+
+  g_slist_free_full (cookies, (GDestroyNotify) gst_http_cookie_free);
+}
+
 static void
 gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
 {
   GstContext *context;
+  GstMessage *msg = NULL;
 
-  if (src->cookie_jar)
+  GST_DEBUG_OBJECT (src, "Ensure cookie jar");
+
+  if (src->cookie_jar) {
+    g_return_if_fail (src->gstcookie_jar != NULL);
     return;
+  }
 
   /* Check if we have a context */
-  context = gst_element_get_context (GST_ELEMENT_CAST (src), "soup-http");
+  context = gst_element_get_context (GST_ELEMENT_CAST (src), "http");
 
   /* Query downstream for a context */
   if (!context) {
-    GstQuery *query = gst_query_new_context ("soup-http");
+    GstQuery *query = gst_query_new_context ("http");
     if (gst_pad_peer_query (GST_BASE_SRC_PAD (src), query)) {
       gst_query_parse_context (query, &context);
     }
@@ -908,39 +1060,49 @@ gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
   /* Post a message asking for a context */
   if (!context) {
     GstMessage *msg =
-        gst_message_new_need_context (GST_OBJECT_CAST (src), "soup-http");
+        gst_message_new_need_context (GST_OBJECT_CAST (src), "http");
 
     if (gst_element_post_message (GST_ELEMENT_CAST (src), msg))
-      context = gst_element_get_context (GST_ELEMENT_CAST (src), "soup-http");
+      context = gst_element_get_context (GST_ELEMENT_CAST (src), "http");
   }
 
   /* if we got a context, use it, otherwise provide one */
   if (context) {
     const GstStructure *structure = gst_context_get_structure (context);
 
-    gst_structure_get (structure, "soup-cookie-jar", G_TYPE_OBJECT,
-        &src->cookie_jar, NULL);
-
+    gst_structure_get (structure, "cookie-jar", GST_TYPE_OBJECT,
+        &src->gstcookie_jar, NULL);
     gst_context_unref (context);
   }
 
-  if (!src->cookie_jar) {
-    GstMessage *msg;
+  if (!src->gstcookie_jar) {
     GstStructure *structure;
 
-    src->cookie_jar = soup_cookie_jar_new ();
+    src->gstcookie_jar = gst_http_cookie_jar_new ();
 
     if (!context)
-      context = gst_context_new ("soup-http", FALSE);
+      context = gst_context_new ("http", FALSE);
     else
       context = gst_context_make_writable (context);
 
     structure = gst_context_writable_structure (context);
-    gst_structure_set (structure, "soup-cookie-jar", G_TYPE_OBJECT,
-        src->cookie_jar, NULL);
+    gst_structure_set (structure, "cookie-jar", GST_TYPE_OBJECT,
+        src->gstcookie_jar, NULL);
     msg = gst_message_new_have_context (GST_OBJECT_CAST (src), context);
-    gst_element_post_message (GST_ELEMENT_CAST (src), msg);
   }
+
+  if (!src->cookie_jar) {
+    src->cookie_jar = soup_cookie_jar_new ();
+    g_signal_connect (src->cookie_jar, "changed",
+        (GCallback) _cookie_jar_changed, src);
+    g_signal_connect (src->gstcookie_jar, "changed",
+        (GCallback) _gstcookie_jar_changed, src);
+
+    gst_soup_http_src_copy_gst_cookies_to_soup_cookies (src);
+  }
+
+  if (msg)
+    gst_element_post_message (GST_ELEMENT_CAST (src), msg);
 }
 
 static gboolean
@@ -1030,6 +1192,10 @@ gst_soup_http_src_session_close (GstSoupHTTPSrc * src)
   if (src->cookie_jar) {
     g_object_unref (src->cookie_jar);
     src->cookie_jar = NULL;
+  }
+  if (src->gstcookie_jar) {
+    gst_object_unref (src->gstcookie_jar);
+    src->gstcookie_jar = NULL;
   }
   g_mutex_unlock (&src->mutex);
 }
@@ -1937,11 +2103,11 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
       break;
     case GST_QUERY_CONTEXT:
       if (gst_query_parse_context_type (query, &context_type)
-          && !g_strcmp0 (context_type, "soup-http") && src->cookie_jar) {
-        context = gst_context_new ("soup-http", FALSE);
+          && !g_strcmp0 (context_type, "http") && src->gstcookie_jar) {
+        context = gst_context_new ("http", FALSE);
         context_structure = gst_context_writable_structure (context);
-        gst_structure_set (context_structure, "soup-cookie-jar", G_TYPE_OBJECT,
-            src->cookie_jar, NULL);
+        gst_structure_set (context_structure, "cookie-jar", GST_TYPE_OBJECT,
+            src->gstcookie_jar, NULL);
         gst_query_set_context (query, context);
         ret = TRUE;
         break;
