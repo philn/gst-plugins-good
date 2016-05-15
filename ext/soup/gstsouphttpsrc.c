@@ -476,6 +476,7 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src)
   src->redirection_uri = NULL;
   src->automatic_redirect = TRUE;
   src->user_agent = NULL;
+  src->referer = NULL;
   src->user_id = NULL;
   src->user_pw = NULL;
   src->proxy_id = NULL;
@@ -532,6 +533,9 @@ gst_soup_http_src_finalize (GObject * gobject)
   g_free (src->redirection_uri);
   if (src->user_agent != NULL) {
     g_free (src->user_agent);
+  }
+  if (src->referer != NULL) {
+    g_free (src->referer);
   }
   if (src->proxy != NULL) {
     soup_uri_free (src->proxy);
@@ -1044,7 +1048,7 @@ gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
 
   GST_DEBUG_OBJECT (src, "Ensure session data");
 
-  if (src->cookie_jar && src->user_agent && src->extra_headers) {
+  if (src->cookie_jar && src->user_agent && src->extra_headers && src->referer) {
     return;
   }
 
@@ -1075,7 +1079,8 @@ gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
 
     gst_structure_get (structure, "cookie-jar", GST_TYPE_OBJECT,
         &src->gstcookie_jar, "user-agent", G_TYPE_STRING, &src->user_agent,
-        "extra-headers", GST_TYPE_STRUCTURE, &src->extra_headers, NULL);
+        "extra-headers", GST_TYPE_STRUCTURE, &src->extra_headers, "referer",
+        G_TYPE_STRING, &src->referer, NULL);
   }
 
   /* if some data wasn't correctly fetched from the context, prepare to emit a new context message */
@@ -1095,6 +1100,9 @@ gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
       if (src->extra_headers)
         gst_structure_set (context_structure, "extra-headers",
             GST_TYPE_STRUCTURE, src->extra_headers, NULL);
+      if (src->referer)
+        gst_structure_set (context_structure, "referer", G_TYPE_STRING,
+            src->referer, NULL);
     }
   }
 
@@ -1361,6 +1369,16 @@ gst_soup_http_src_got_headers (GstSoupHTTPSrc * src, SoupMessage * msg)
               "Accept-Ranges"))) {
     if (g_ascii_strcasecmp (accept_ranges, "none") == 0)
       src->seekable = FALSE;
+  }
+
+  /* Referer */
+  if ((value =
+          soup_message_headers_get_one (msg->response_headers,
+              "Referer")) != NULL) {
+    if (src->referer) {
+      g_free (src->referer);
+    }
+    src->referer = g_strdup (value);
   }
 
   /* Icecast stuff */
@@ -1641,6 +1659,11 @@ gst_soup_http_src_build_message (GstSoupHTTPSrc * src, const gchar * method)
       src->stop_position);
 
   gst_soup_http_src_add_extra_headers (src);
+
+  if (src->referer) {
+    soup_message_headers_append (src->msg->request_headers, "Referer",
+        src->referer);
+  }
 
   return TRUE;
 }
@@ -2143,6 +2166,11 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
           gst_structure_set (context_structure, "extra-headers",
               GST_TYPE_STRUCTURE, src->extra_headers, NULL);
         }
+        if (src->referer) {
+          gst_structure_set (context_structure, "referer", G_TYPE_STRING,
+              src->referer, NULL);
+        }
+
         gst_query_set_context (query, context);
         ret = TRUE;
         break;
