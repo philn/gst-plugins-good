@@ -421,6 +421,8 @@ GST_START_TEST (test_icy_stream)
 
 GST_END_TEST;
 
+#define EXTRA_HEADERS_STR "extra-headers, name1=(string)value1, name2=(string)value2"
+
 static GstElement *
 add_souphttpsrc (GstElement * pipe, const gchar * name)
 {
@@ -578,6 +580,56 @@ GST_START_TEST (test_context_refferer_sharing)
 
 GST_END_TEST;
 
+GST_START_TEST (test_context_extra_headers_sharing)
+{
+  GstElement *pipeline;
+  GstElement *src, *src2;
+  GstMessage *msg;
+  gchar *url;
+  GstStructure *extra_headers;
+
+  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  fail_unless (pipeline != NULL);
+
+  src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");
+
+  url = g_strdup_printf ("http://127.0.0.1:%u/", http_port);
+  g_object_set (src, "location", url, NULL);
+  extra_headers = gst_structure_new_from_string (EXTRA_HEADERS_STR);
+  g_object_set (src, "extra-headers", extra_headers, NULL);
+  gst_structure_free (extra_headers);
+  g_free (url);
+
+  gst_element_set_state (pipeline, GST_STATE_PAUSED);
+
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
+  fail_unless (msg != NULL);
+  gst_message_unref (msg);
+
+  /* Add a new http src and hope it uses the same user agent */
+  src2 = add_souphttpsrc (pipeline, "src2");
+  url = g_strdup_printf ("http://127.0.0.1:%u/check_extra_headers", http_port);
+  g_object_set (src2, "location", url, NULL);
+  g_free (url);
+
+  gst_element_sync_state_with_parent (src2);
+
+  msg =
+      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
+      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  fail_unless (msg != NULL);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  gst_message_unref (msg);
+
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  gst_object_unref (src);
+  gst_object_unref (src2);
+  gst_object_unref (pipeline);
+}
+
+GST_END_TEST;
+
 static Suite *
 souphttpsrc_suite (void)
 {
@@ -614,6 +666,8 @@ souphttpsrc_suite (void)
   tcase_add_test (tc_context, test_context_posting);
   tcase_add_test (tc_context, test_context_user_agent_sharing);
   tcase_add_test (tc_context, test_context_refferer_sharing);
+  tcase_add_test (tc_context, test_context_extra_headers_sharing);
+  suite_add_tcase (s, tc_context);
 
   suite_add_tcase (s, tc_internet);
   tcase_set_timeout (tc_internet, 250);
@@ -653,6 +707,32 @@ check_referrer (SoupMessage * msg, const gchar * expected_referrer)
   return strcmp (expected_referrer, referrer) == 0;
 }
 
+static gboolean
+check_header_foreach (GQuark field_id, const GValue * value, gpointer user_data)
+{
+  const gchar *name;
+  const gchar *expected_value, *header_value;
+
+  name = g_quark_to_string (field_id);
+  header_value = soup_message_headers_get_one (user_data, name);
+  expected_value = g_value_get_string (value);
+
+  if (header_value == NULL)
+    return FALSE;
+
+  return strcmp (header_value, expected_value) == 0;
+}
+
+static gboolean
+check_extra_headers (SoupMessage * msg, GstStructure * extra_headers)
+{
+  SoupMessageHeaders *headers;
+
+  g_object_get (msg, "request-headers", &headers, NULL);
+
+  return gst_structure_foreach (extra_headers, check_header_foreach, headers);
+}
+
 static void
 do_get (SoupMessage * msg, const char *path)
 {
@@ -687,6 +767,13 @@ do_get (SoupMessage * msg, const char *path)
     if (!check_referrer (msg, "main-referrer")) {
       status = SOUP_STATUS_BAD_REQUEST;
     }
+  } else if (!strcmp (path, "/check_extra_headers")) {
+    GstStructure *extra_headers =
+        gst_structure_new_from_string (EXTRA_HEADERS_STR);
+    if (!check_extra_headers (msg, extra_headers)) {
+      status = SOUP_STATUS_BAD_REQUEST;
+    }
+    gst_structure_free (extra_headers);
   }
 
   if (SOUP_STATUS_IS_REDIRECTION (status)) {
