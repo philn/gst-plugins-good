@@ -475,7 +475,7 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src)
   src->location = NULL;
   src->redirection_uri = NULL;
   src->automatic_redirect = TRUE;
-  src->user_agent = g_strdup (DEFAULT_USER_AGENT);
+  src->user_agent = NULL;
   src->user_id = NULL;
   src->user_pw = NULL;
   src->proxy_id = NULL;
@@ -530,7 +530,9 @@ gst_soup_http_src_finalize (GObject * gobject)
   g_object_unref (src->cancellable);
   g_free (src->location);
   g_free (src->redirection_uri);
-  g_free (src->user_agent);
+  if (src->user_agent != NULL) {
+    g_free (src->user_agent);
+  }
   if (src->proxy != NULL) {
     soup_uri_free (src->proxy);
   }
@@ -581,7 +583,9 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       break;
     }
     case PROP_USER_AGENT:
-      g_free (src->user_agent);
+      if (src->user_agent) {
+        g_free (src->user_agent);
+      }
       src->user_agent = g_value_dup_string (value);
       break;
     case PROP_IRADIO_MODE:
@@ -1033,15 +1037,14 @@ gst_soup_http_src_copy_gst_cookies_to_soup_cookies (GstSoupHTTPSrc * src)
 }
 
 static void
-gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
+gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
 {
   GstContext *context;
-  GstMessage *msg = NULL;
+  GstStructure *context_structure = NULL;
 
-  GST_DEBUG_OBJECT (src, "Ensure cookie jar");
+  GST_DEBUG_OBJECT (src, "Ensure session data");
 
-  if (src->cookie_jar) {
-    g_return_if_fail (src->gstcookie_jar != NULL);
+  if (src->cookie_jar && src->user_agent) {
     return;
   }
 
@@ -1071,24 +1074,39 @@ gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
     const GstStructure *structure = gst_context_get_structure (context);
 
     gst_structure_get (structure, "cookie-jar", GST_TYPE_OBJECT,
-        &src->gstcookie_jar, NULL);
-    gst_context_unref (context);
+        &src->gstcookie_jar, "user-agent", G_TYPE_STRING, &src->user_agent,
+        NULL);
   }
 
-  if (!src->gstcookie_jar) {
-    GstStructure *structure;
-
-    src->gstcookie_jar = gst_http_cookie_jar_new ();
-
-    if (!context)
+  /* if some data wasn't correctly fetched from the context, prepare to emit a new context message */
+  if (!src->gstcookie_jar || !src->user_agent) {
+    gboolean new_context = FALSE;
+    if (!context) {
       context = gst_context_new ("http", FALSE);
-    else
+      new_context = TRUE;
+    } else
       context = gst_context_make_writable (context);
 
-    structure = gst_context_writable_structure (context);
-    gst_structure_set (structure, "cookie-jar", GST_TYPE_OBJECT,
+    context_structure = gst_context_writable_structure (context);
+    if (new_context) {
+      if (src->user_agent)
+        gst_structure_set (context_structure, "user-agent", G_TYPE_STRING,
+            src->user_agent, NULL);
+    }
+  }
+
+  /* fallback to default user-agent if none was found in the context */
+  if (!src->user_agent) {
+    src->user_agent = g_strdup (DEFAULT_USER_AGENT);
+    gst_structure_set (context_structure, "user-agent", G_TYPE_STRING,
+        src->user_agent, NULL);
+  }
+
+  /* use an empty cookie jar if none was found in the context */
+  if (!src->gstcookie_jar) {
+    src->gstcookie_jar = gst_http_cookie_jar_new ();
+    gst_structure_set (context_structure, "cookie-jar", GST_TYPE_OBJECT,
         src->gstcookie_jar, NULL);
-    msg = gst_message_new_have_context (GST_OBJECT_CAST (src), context);
   }
 
   if (!src->cookie_jar) {
@@ -1101,8 +1119,12 @@ gst_soup_http_src_ensure_cookie_jar (GstSoupHTTPSrc * src)
     gst_soup_http_src_copy_gst_cookies_to_soup_cookies (src);
   }
 
-  if (msg)
+  /* emit the context if any session data was updated */
+  if (context_structure != NULL) {
+    GstMessage *msg =
+        gst_message_new_have_context (GST_OBJECT_CAST (src), context);
     gst_element_post_message (GST_ELEMENT_CAST (src), msg);
+  }
 }
 
 static gboolean
@@ -1118,6 +1140,8 @@ gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
         ("Missing location property"));
     return FALSE;
   }
+
+  gst_soup_http_src_ensure_session_data (src);
 
   if (!src->session) {
     GST_DEBUG_OBJECT (src, "Creating session");
@@ -1163,8 +1187,6 @@ gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
   else
     soup_session_remove_feature_by_type (src->session,
         SOUP_TYPE_CONTENT_DECODER);
-
-  gst_soup_http_src_ensure_cookie_jar (src);
 
   if (src->cookie_jar)
     soup_session_add_feature (src->session,
@@ -2103,11 +2125,17 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
       break;
     case GST_QUERY_CONTEXT:
       if (gst_query_parse_context_type (query, &context_type)
-          && !g_strcmp0 (context_type, "http") && src->gstcookie_jar) {
+          && !g_strcmp0 (context_type, "http")) {
         context = gst_context_new ("http", FALSE);
         context_structure = gst_context_writable_structure (context);
-        gst_structure_set (context_structure, "cookie-jar", GST_TYPE_OBJECT,
-            src->gstcookie_jar, NULL);
+        if (src->gstcookie_jar) {
+          gst_structure_set (context_structure, "cookie-jar", GST_TYPE_OBJECT,
+              src->gstcookie_jar, NULL);
+        }
+        if (src->user_agent) {
+          gst_structure_set (context_structure, "user-agent", G_TYPE_STRING,
+              src->user_agent, NULL);
+        }
         gst_query_set_context (query, context);
         ret = TRUE;
         break;
