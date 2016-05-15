@@ -421,10 +421,121 @@ GST_START_TEST (test_icy_stream)
 
 GST_END_TEST;
 
+static GstElement *
+add_souphttpsrc (GstElement * pipe, const gchar * name)
+{
+  GstElement *src, *sink;
+
+  src = gst_element_factory_make ("souphttpsrc", name);
+  fail_unless (src != NULL);
+
+  sink = gst_element_factory_make ("fakesink", NULL);
+  fail_unless (sink != NULL);
+
+  gst_bin_add (GST_BIN (pipe), src);
+  gst_bin_add (GST_BIN (pipe), sink);
+  fail_unless (gst_element_link (src, sink));
+
+  gst_element_sync_state_with_parent (sink);
+
+  return src;
+}
+
+GST_START_TEST (test_context_posting)
+{
+  GstElement *pipeline;
+  GstElement *src;
+  GstMessage *msg;
+  GstContext *context;
+  const gchar *context_type;
+  gchar *url;
+
+  pipeline = gst_parse_launch ("souphttpsrc name=src ! fakesink", NULL);
+  fail_unless (pipeline != NULL);
+
+  src = gst_bin_get_by_name (GST_BIN (pipeline), "src");
+
+  url = g_strdup_printf ("http://127.0.0.1:%u/", http_port);
+  g_object_set (src, "location", url, NULL);
+  g_free (url);
+
+  gst_element_set_state (pipeline, GST_STATE_PAUSED);
+
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_NEED_CONTEXT, -1);
+  fail_unless (msg != NULL);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_NEED_CONTEXT);
+  gst_message_parse_context_type (msg, &context_type);
+  fail_unless (context_type != NULL);
+  fail_unless (strcmp (context_type, "http") == 0);
+  gst_message_unref (msg);
+
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_HAVE_CONTEXT, -1);
+  fail_unless (msg != NULL);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_HAVE_CONTEXT);
+  gst_message_parse_have_context (msg, &context);
+  fail_unless (context != NULL);
+  gst_message_unref (msg);
+
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  gst_context_unref (context);
+  gst_object_unref (src);
+  gst_object_unref (pipeline);
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_context_user_agent_sharing)
+{
+  GstElement *pipeline;
+  GstElement *src, *src2;
+  GstMessage *msg;
+  gchar *url;
+
+  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  fail_unless (pipeline != NULL);
+
+  src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");
+
+  url = g_strdup_printf ("http://127.0.0.1:%u/", http_port);
+  g_object_set (src, "location", url, NULL);
+  g_free (url);
+  g_object_set (src, "user-agent", "test-agent", NULL);
+
+  gst_element_set_state (pipeline, GST_STATE_PAUSED);
+
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
+  fail_unless (msg != NULL);
+  gst_message_unref (msg);
+
+  /* Add a new http src and hope it uses the same user agent */
+  src2 = add_souphttpsrc (pipeline, "src2");
+  url = g_strdup_printf ("http://127.0.0.1:%u/check_user_agent", http_port);
+  g_object_set (src2, "location", url, NULL);
+  g_free (url);
+
+  gst_element_sync_state_with_parent (src2);
+
+  msg =
+      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
+      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  fail_unless (msg != NULL);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  gst_message_unref (msg);
+
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  gst_object_unref (src);
+  gst_object_unref (src2);
+  gst_object_unref (pipeline);
+}
+
+GST_END_TEST;
+
 static Suite *
 souphttpsrc_suite (void)
 {
-  TCase *tc_chain, *tc_internet;
+  TCase *tc_chain, *tc_context, *tc_internet;
   Suite *s;
 
   /* we don't support exceptions from the proxy, so just unset the environment
@@ -434,9 +545,11 @@ souphttpsrc_suite (void)
 
   s = suite_create ("souphttpsrc");
   tc_chain = tcase_create ("general");
+  tc_context = tcase_create ("context");
   tc_internet = tcase_create ("internet");
 
   suite_add_tcase (s, tc_chain);
+
   tcase_add_test (tc_chain, test_first_buffer_has_offset);
   tcase_add_test (tc_chain, test_redirect_yes);
   tcase_add_test (tc_chain, test_redirect_no);
@@ -451,6 +564,10 @@ souphttpsrc_suite (void)
   tcase_add_test (tc_chain, test_bad_password_digest_auth);
   tcase_add_test (tc_chain, test_https);
 
+  suite_add_tcase (s, tc_context);
+  tcase_add_test (tc_context, test_context_posting);
+  tcase_add_test (tc_context, test_context_user_agent_sharing);
+
   suite_add_tcase (s, tc_internet);
   tcase_set_timeout (tc_internet, 250);
   tcase_add_test (tc_internet, test_icy_stream);
@@ -459,6 +576,17 @@ souphttpsrc_suite (void)
 }
 
 GST_CHECK_MAIN (souphttpsrc);
+
+static gboolean
+check_user_agent (SoupMessage * msg, const gchar * expected_user_agent)
+{
+  SoupMessageHeaders *headers;
+
+  g_object_get (msg, "request-headers", &headers, NULL);
+
+  return strcmp (expected_user_agent, soup_message_headers_get_one (headers,
+          "user-agent")) == 0;
+}
 
 static void
 do_get (SoupMessage * msg, const char *path)
@@ -486,6 +614,10 @@ do_get (SoupMessage * msg, const char *path)
   else if (!strcmp (path, "/404-with-data")) {
     status = SOUP_STATUS_NOT_FOUND;
     send_error_doc = TRUE;
+  } else if (!strcmp (path, "/check_user_agent")) {
+    if (!check_user_agent (msg, "test-user-agent")) {
+      status = SOUP_STATUS_BAD_REQUEST;
+    }
   }
 
   if (SOUP_STATUS_IS_REDIRECTION (status)) {
