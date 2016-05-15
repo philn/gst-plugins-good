@@ -532,6 +532,52 @@ GST_START_TEST (test_context_user_agent_sharing)
 
 GST_END_TEST;
 
+GST_START_TEST (test_context_refferer_sharing)
+{
+  GstElement *pipeline;
+  GstElement *src, *src2;
+  GstMessage *msg;
+  gchar *url;
+
+  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  fail_unless (pipeline != NULL);
+
+  src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");
+
+  url = g_strdup_printf ("http://127.0.0.1:%u/main-referrer", http_port);
+  g_object_set (src, "location", url, NULL);
+  g_free (url);
+
+  gst_element_set_state (pipeline, GST_STATE_PAUSED);
+
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
+  fail_unless (msg != NULL);
+  gst_message_unref (msg);
+
+  /* Add a new http src and hope it uses the same user agent */
+  src2 = add_souphttpsrc (pipeline, "src2");
+  url = g_strdup_printf ("http://127.0.0.1:%u/check_referrer", http_port);
+  g_object_set (src2, "location", url, NULL);
+  g_free (url);
+
+  gst_element_sync_state_with_parent (src2);
+
+  msg =
+      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
+      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  fail_unless (msg != NULL);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  gst_message_unref (msg);
+
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  gst_object_unref (src);
+  gst_object_unref (src2);
+  gst_object_unref (pipeline);
+}
+
+GST_END_TEST;
+
 static Suite *
 souphttpsrc_suite (void)
 {
@@ -567,6 +613,7 @@ souphttpsrc_suite (void)
   suite_add_tcase (s, tc_context);
   tcase_add_test (tc_context, test_context_posting);
   tcase_add_test (tc_context, test_context_user_agent_sharing);
+  tcase_add_test (tc_context, test_context_refferer_sharing);
 
   suite_add_tcase (s, tc_internet);
   tcase_set_timeout (tc_internet, 250);
@@ -581,11 +628,29 @@ static gboolean
 check_user_agent (SoupMessage * msg, const gchar * expected_user_agent)
 {
   SoupMessageHeaders *headers;
+  const gchar *user_agent;
+
+  g_object_get (msg, "request-headers", &headers, NULL);
+  user_agent = soup_message_headers_get_one (headers, "user-agent");
+  if (!user_agent)
+    return FALSE;
+
+  return strcmp (expected_user_agent, user_agent) == 0;
+}
+
+static gboolean
+check_referrer (SoupMessage * msg, const gchar * expected_referrer)
+{
+  SoupMessageHeaders *headers;
+  const gchar *referrer;
 
   g_object_get (msg, "request-headers", &headers, NULL);
 
-  return strcmp (expected_user_agent, soup_message_headers_get_one (headers,
-          "user-agent")) == 0;
+  referrer = soup_message_headers_get_one (headers, "referer");
+  if (!referrer)
+    return FALSE;
+
+  return strcmp (expected_referrer, referrer) == 0;
 }
 
 static void
@@ -616,6 +681,10 @@ do_get (SoupMessage * msg, const char *path)
     send_error_doc = TRUE;
   } else if (!strcmp (path, "/check_user_agent")) {
     if (!check_user_agent (msg, "test-user-agent")) {
+      status = SOUP_STATUS_BAD_REQUEST;
+    }
+  } else if (!strcmp (path, "/check_referrer")) {
+    if (!check_referrer (msg, "main-referrer")) {
       status = SOUP_STATUS_BAD_REQUEST;
     }
   }
