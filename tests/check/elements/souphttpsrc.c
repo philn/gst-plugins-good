@@ -451,6 +451,7 @@ GST_START_TEST (test_context_posting)
   GstContext *context;
   const gchar *context_type;
   gchar *url;
+  gint http_port = 8008;
 
   pipeline = gst_parse_launch ("souphttpsrc name=src ! fakesink", NULL);
   fail_unless (pipeline != NULL);
@@ -493,6 +494,11 @@ GST_START_TEST (test_context_user_agent_sharing)
   GstElement *src, *src2;
   GstMessage *msg;
   gchar *url;
+  SoupServer *server;
+  gint http_port;
+
+  server = run_server (FALSE);
+  http_port = get_port_from_server (server);
 
   pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
@@ -502,7 +508,7 @@ GST_START_TEST (test_context_user_agent_sharing)
   url = g_strdup_printf ("http://127.0.0.1:%u/", http_port);
   g_object_set (src, "location", url, NULL);
   g_free (url);
-  g_object_set (src, "user-agent", "test-agent", NULL);
+  g_object_set (src, "user-agent", "test-user-agent", NULL);
 
   gst_element_set_state (pipeline, GST_STATE_PAUSED);
 
@@ -530,6 +536,7 @@ GST_START_TEST (test_context_user_agent_sharing)
   gst_object_unref (src);
   gst_object_unref (src2);
   gst_object_unref (pipeline);
+  gst_object_unref (server);
 }
 
 GST_END_TEST;
@@ -540,6 +547,11 @@ GST_START_TEST (test_context_refferer_sharing)
   GstElement *src, *src2;
   GstMessage *msg;
   gchar *url;
+  SoupServer *server;
+  gint http_port;
+
+  server = run_server (FALSE);
+  http_port = get_port_from_server (server);
 
   pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
@@ -576,6 +588,7 @@ GST_START_TEST (test_context_refferer_sharing)
   gst_object_unref (src);
   gst_object_unref (src2);
   gst_object_unref (pipeline);
+  gst_object_unref (server);
 }
 
 GST_END_TEST;
@@ -587,6 +600,11 @@ GST_START_TEST (test_context_extra_headers_sharing)
   GstMessage *msg;
   gchar *url;
   GstStructure *extra_headers;
+  SoupServer *server;
+  gint http_port;
+
+  server = run_server (FALSE);
+  http_port = get_port_from_server (server);
 
   pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
@@ -626,6 +644,7 @@ GST_START_TEST (test_context_extra_headers_sharing)
   gst_object_unref (src);
   gst_object_unref (src2);
   gst_object_unref (pipeline);
+  gst_object_unref (server);
 }
 
 GST_END_TEST;
@@ -662,7 +681,6 @@ souphttpsrc_suite (void)
   tcase_add_test (tc_chain, test_bad_password_digest_auth);
   tcase_add_test (tc_chain, test_https);
 
-  suite_add_tcase (s, tc_context);
   tcase_add_test (tc_context, test_context_posting);
   tcase_add_test (tc_context, test_context_user_agent_sharing);
   tcase_add_test (tc_context, test_context_refferer_sharing);
