@@ -1077,14 +1077,25 @@ gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
   if (context) {
     const GstStructure *structure = gst_context_get_structure (context);
 
+    /* FIXME Should we remove all previous entries and use the context's?
+     * or should we keep what we have and just use what was not set yet? */
+    src->user_agent =
+        g_strdup (gst_structure_get_string (structure, "user-agent"));
+    src->referer = g_strdup (gst_structure_get_string (structure, "referer"));
+
     gst_structure_get (structure, "cookie-jar", GST_TYPE_OBJECT,
-        &src->gstcookie_jar, "user-agent", G_TYPE_STRING, &src->user_agent,
-        "extra-headers", GST_TYPE_STRUCTURE, &src->extra_headers, "referer",
-        G_TYPE_STRING, &src->referer, NULL);
+        &src->gstcookie_jar, NULL);
+    gst_structure_get (structure, "extra-headers", GST_TYPE_STRUCTURE,
+        &src->extra_headers, NULL);
+  }
+
+  if (!src->referer) {
+    src->referer = g_strdup (src->location);
   }
 
   /* if some data wasn't correctly fetched from the context, prepare to emit a new context message */
-  if (!src->gstcookie_jar || !src->user_agent || !src->extra_headers) {
+  if (!src->gstcookie_jar || !src->user_agent || !src->extra_headers
+      || !src->referer) {
     gboolean new_context = FALSE;
     if (!context) {
       context = gst_context_new ("http", FALSE);
