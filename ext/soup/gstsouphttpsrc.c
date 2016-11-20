@@ -531,12 +531,8 @@ gst_soup_http_src_finalize (GObject * gobject)
   g_object_unref (src->cancellable);
   g_free (src->location);
   g_free (src->redirection_uri);
-  if (src->user_agent != NULL) {
-    g_free (src->user_agent);
-  }
-  if (src->referer != NULL) {
-    g_free (src->referer);
-  }
+  g_free (src->user_agent);
+  g_free (src->referer);
   if (src->proxy != NULL) {
     soup_uri_free (src->proxy);
   }
@@ -1386,9 +1382,7 @@ gst_soup_http_src_got_headers (GstSoupHTTPSrc * src, SoupMessage * msg)
   if ((value =
           soup_message_headers_get_one (msg->response_headers,
               "Referer")) != NULL) {
-    if (src->referer) {
-      g_free (src->referer);
-    }
+    g_free (src->referer);
     src->referer = g_strdup (value);
   }
 
