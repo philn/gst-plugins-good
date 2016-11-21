@@ -782,9 +782,15 @@ do_get (SoupMessage * msg, const char *path)
       status = SOUP_STATUS_BAD_REQUEST;
     }
   } else if (!strcmp (path, "/check_referrer")) {
-    if (!check_referrer (msg, "main-referrer")) {
+    SoupURI *uri_copy = soup_uri_copy_host (soup_message_get_uri (msg));
+    gchar *referer_uri;
+    soup_uri_set_path (uri_copy, "/main-referrer");
+    referer_uri = soup_uri_to_string (uri_copy, FALSE);
+    if (!check_referrer (msg, referer_uri)) {
       status = SOUP_STATUS_BAD_REQUEST;
     }
+    g_free (referer_uri);
+    soup_uri_free (uri_copy);
   } else if (!strcmp (path, "/check_extra_headers")) {
     GstStructure *extra_headers =
         gst_structure_new_from_string (EXTRA_HEADERS_STR);
