@@ -524,17 +524,13 @@ GST_START_TEST (test_context_user_agent_sharing)
 
   gst_element_sync_state_with_parent (src2);
 
-  msg =
-      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
-      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
   fail_unless (msg != NULL);
-  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_DONE);
   gst_message_unref (msg);
 
   gst_element_set_state (pipeline, GST_STATE_NULL);
 
-  gst_object_unref (src);
-  gst_object_unref (src2);
   gst_object_unref (pipeline);
   gst_object_unref (server);
 }
@@ -576,17 +572,13 @@ GST_START_TEST (test_context_refferer_sharing)
 
   gst_element_sync_state_with_parent (src2);
 
-  msg =
-      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
-      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
   fail_unless (msg != NULL);
-  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_DONE);
   gst_message_unref (msg);
 
   gst_element_set_state (pipeline, GST_STATE_NULL);
 
-  gst_object_unref (src);
-  gst_object_unref (src2);
   gst_object_unref (pipeline);
   gst_object_unref (server);
 }
@@ -632,17 +624,13 @@ GST_START_TEST (test_context_extra_headers_sharing)
 
   gst_element_sync_state_with_parent (src2);
 
-  msg =
-      gst_bus_poll (GST_ELEMENT_BUS (pipeline),
-      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
+  msg = gst_bus_poll (GST_ELEMENT_BUS (pipeline), GST_MESSAGE_ASYNC_DONE, -1);
   fail_unless (msg != NULL);
-  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS);
+  fail_unless (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_DONE);
   gst_message_unref (msg);
 
   gst_element_set_state (pipeline, GST_STATE_NULL);
 
-  gst_object_unref (src);
-  gst_object_unref (src2);
   gst_object_unref (pipeline);
   gst_object_unref (server);
 }
