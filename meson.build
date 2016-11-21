@@ -162,6 +162,8 @@ gstaudio_dep = dependency('gstreamer-audio-1.0', version : gst_req,
     fallback : ['gst-plugins-base', 'audio_dep'])
 gstfft_dep = dependency('gstreamer-fft-1.0', version : gst_req,
     fallback : ['gst-plugins-base', 'fft_dep'])
+gsthttp_dep = dependency('gstreamer-http-1.0', version : gst_req,
+    fallback : ['gst-plugins-base', 'http_dep'])
 gstriff_dep = dependency('gstreamer-riff-1.0', version : gst_req,
     fallback : ['gst-plugins-base', 'riff_dep'])
 gstrtp_dep = dependency('gstreamer-rtp-1.0', version : gst_req,

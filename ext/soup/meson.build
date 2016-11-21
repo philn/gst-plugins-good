@@ -18,7 +18,7 @@ if libsoup_dep.found()
     c_args : gst_plugins_good_args + soup_args,
     link_args : noseh_link_args,
     include_directories : [configinc, libsinc],
-    dependencies : [gst_dep, gstbase_dep, gsttag_dep, libsoup_dep],
+    dependencies : [gst_dep, gstbase_dep, gsthttp_dep, gsttag_dep, libsoup_dep],
     install : true,
     install_dir : plugins_install_dir,
   )
