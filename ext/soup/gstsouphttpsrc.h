@@ -93,6 +93,7 @@ struct _GstSoupHTTPSrc {
   GTlsDatabase *tls_database;
   GTlsInteraction *tls_interaction;
 
+  gboolean post_context;
   GCancellable *cancellable;
   GInputStream *input_stream;
 

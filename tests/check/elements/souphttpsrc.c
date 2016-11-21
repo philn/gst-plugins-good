@@ -453,7 +453,9 @@ GST_START_TEST (test_context_posting)
   gchar *url;
   gint http_port = 8008;
 
-  pipeline = gst_parse_launch ("souphttpsrc name=src ! fakesink", NULL);
+  pipeline =
+      gst_parse_launch
+      ("souphttpsrc post-http-context=TRUE name=src ! fakesink", NULL);
   fail_unless (pipeline != NULL);
 
   src = gst_bin_get_by_name (GST_BIN (pipeline), "src");
@@ -500,7 +502,9 @@ GST_START_TEST (test_context_user_agent_sharing)
   server = run_server (FALSE);
   http_port = get_port_from_server (server);
 
-  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  pipeline =
+      gst_parse_launch
+      ("souphttpsrc post-http-context=TRUE name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
 
   src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");
@@ -549,7 +553,9 @@ GST_START_TEST (test_context_refferer_sharing)
   server = run_server (FALSE);
   http_port = get_port_from_server (server);
 
-  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  pipeline =
+      gst_parse_launch
+      ("souphttpsrc post-http-context=TRUE name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
 
   src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");
@@ -598,7 +604,9 @@ GST_START_TEST (test_context_extra_headers_sharing)
   server = run_server (FALSE);
   http_port = get_port_from_server (server);
 
-  pipeline = gst_parse_launch ("souphttpsrc name=src1 ! fakesink", NULL);
+  pipeline =
+      gst_parse_launch
+      ("souphttpsrc post-http-context=TRUE name=src1 ! fakesink", NULL);
   fail_unless (pipeline != NULL);
 
   src = gst_bin_get_by_name (GST_BIN (pipeline), "src1");

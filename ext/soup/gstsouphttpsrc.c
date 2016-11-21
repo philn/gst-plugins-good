@@ -118,6 +118,7 @@ enum
   PROP_RETRIES,
   PROP_METHOD,
   PROP_TLS_INTERACTION,
+  PROP_POST_HTTP_CONTEXT
 };
 
 #define DEFAULT_USER_AGENT           "GStreamer souphttpsrc "
@@ -133,6 +134,7 @@ enum
 #define DEFAULT_TIMEOUT              15
 #define DEFAULT_RETRIES              3
 #define DEFAULT_SOUP_METHOD          NULL
+#define DEFAULT_POST_HTTP_CONTEXT    FALSE
 
 #define GROW_BLOCKSIZE_LIMIT 1
 #define GROW_BLOCKSIZE_COUNT 1
@@ -406,6 +408,24 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
           "The HTTP method to use (GET, HEAD, OPTIONS, etc)",
           DEFAULT_SOUP_METHOD, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+
+  /**
+   * GstSoupHTTPSrc::post-http-context:
+   *
+   * If set to %TRUE, souphttpsrc will post an have-context message on the bus.
+   * The context contains data specific to the HTTP session that other HTTP
+   * source element can possibly reuse. Currently the context structure has
+   * four elements: user-agent, referer, extra-headers and cookie-jar.
+   *
+   * Since: 1.12
+   */
+  g_object_class_install_property (gobject_class, PROP_POST_HTTP_CONTEXT,
+      g_param_spec_boolean ("post-http-context", "Post an HTTP context the bus",
+          "Share HTTP session data in a have-context message",
+          DEFAULT_POST_HTTP_CONTEXT,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+
   gst_element_class_add_static_pad_template (gstelement_class, &srctemplate);
 
   gst_element_class_set_static_metadata (gstelement_class, "HTTP client source",
@@ -492,6 +512,7 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src)
   src->ssl_use_system_ca_file = DEFAULT_SSL_USE_SYSTEM_CA_FILE;
   src->tls_database = DEFAULT_TLS_DATABASE;
   src->tls_interaction = DEFAULT_TLS_INTERACTION;
+  src->post_context = DEFAULT_POST_HTTP_CONTEXT;
   src->max_retries = DEFAULT_RETRIES;
   src->method = DEFAULT_SOUP_METHOD;
   src->minimum_blocksize = gst_base_src_get_blocksize (GST_BASE_SRC_CAST (src));
@@ -674,6 +695,9 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       g_free (src->method);
       src->method = g_value_dup_string (value);
       break;
+    case PROP_POST_HTTP_CONTEXT:
+      src->post_context = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -764,6 +788,9 @@ gst_soup_http_src_get_property (GObject * object, guint prop_id,
       break;
     case PROP_METHOD:
       g_value_set_string (value, src->method);
+      break;
+    case PROP_POST_HTTP_CONTEXT:
+      g_value_set_boolean (value, src->post_context);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1138,7 +1165,7 @@ gst_soup_http_src_ensure_session_data (GstSoupHTTPSrc * src)
   }
 
   /* emit the context if any session data was updated */
-  if (context_structure != NULL) {
+  if (src->post_context && context_structure != NULL) {
     GstMessage *msg =
         gst_message_new_have_context (GST_OBJECT_CAST (src), context);
     gst_element_post_message (GST_ELEMENT_CAST (src), msg);
