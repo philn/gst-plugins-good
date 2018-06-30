@@ -3917,8 +3917,11 @@ next:
     sub_stream->seen_markup_tag = sub_stream->seen_markup_tag ||
         gst_matroska_demux_subtitle_chunk_has_tag (element, (gchar *) map.data);
 
-    if (!sub_stream->seen_markup_tag) {
+    if (sub_stream->seen_markup_tag) {
       utf8 = g_markup_escape_text ((gchar *) map.data, map.size);
+
+      /* FIXME: WebVTT support */
+      gst_markup_utils_sanitize_subrip_text (&utf8, FALSE);
 
       newbuf = gst_buffer_new_wrapped (utf8, strlen (utf8));
       gst_buffer_unmap (*buf, &map);
