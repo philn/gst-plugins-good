@@ -120,7 +120,8 @@ static GstStaticPadTemplate subtitle_src_templ =
     GST_STATIC_PAD_TEMPLATE ("subtitle_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
-    GST_STATIC_CAPS ("text/x-raw, format=pango-markup; application/x-ssa; "
+    GST_STATIC_CAPS
+    ("text/x-raw, format=pango-markup; application/x-ssa;application/x-subtitle-srt; "
         "application/x-ass;application/x-usf; subpicture/x-dvd; "
         "subpicture/x-pgs; subtitle/x-kate; " "application/x-subtitle-unknown")
     );
@@ -6843,10 +6844,14 @@ gst_matroska_demux_subtitle_caps (GstMatroskaTrackSubtitleContext *
    * Check if we have to do something with codec_private */
   if (!strcmp (codec_id, GST_MATROSKA_CODEC_ID_SUBTITLE_UTF8)) {
     /* well, plain text simply does not have a lot of markup ... */
-    caps = gst_caps_new_simple ("text/x-raw", "format", G_TYPE_STRING,
-        "pango-markup", NULL);
+    // phil
+    /* caps = gst_caps_new_simple ("text/x-raw", "format", G_TYPE_STRING, */
+    /*     "pango-markup", NULL); */
+    /* context->postprocess_frame = gst_matroska_demux_check_subtitle_buffer; */
+    /* subtitlecontext->check_markup = TRUE; */
+    caps = gst_caps_new_empty_simple ("application/x-subtitle-srt");
     context->postprocess_frame = gst_matroska_demux_check_subtitle_buffer;
-    subtitlecontext->check_markup = TRUE;
+    subtitlecontext->check_markup = FALSE;
   } else if (!strcmp (codec_id, GST_MATROSKA_CODEC_ID_SUBTITLE_SSA)) {
     caps = gst_caps_new_empty_simple ("application/x-ssa");
     context->postprocess_frame = gst_matroska_demux_check_subtitle_buffer;
